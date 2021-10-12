@@ -16,13 +16,14 @@ pub fn yaml(stream: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut lines = Vec::default();
     let mut line = String::default();
     let mut prev_token = &tokens[0];
+    let initial_indent_whitespace = prev_token.span().start().column;
     
     for token in tokens.iter() {
         let prev_span = prev_token.span();
         let span = token.span();
 
-        let (prev_start, prev_end) = (prev_span.start(), prev_span.end());
-        let (current_start, current_end) = (span.start(), span.end());
+        let prev_end = prev_span.end();
+        let current_start = span.start();
 
         // Check if we're on a new line
         if prev_end.line != current_start.line {
@@ -41,10 +42,16 @@ pub fn yaml(stream: proc_macro::TokenStream) -> proc_macro::TokenStream {
         // first token of the line or following a previous token on the same line
         let spaces = if prev_end.line != current_start.line {
             current_start.column
-        } else {
-            current_start.column
-                .checked_sub(prev_end.column)
+                .checked_sub(initial_indent_whitespace)
                 .unwrap_or(current_start.column)
+        } else {
+            let start_spaces = current_start.column
+                .checked_sub(prev_end.column)
+                .unwrap_or(current_start.column);
+
+            start_spaces
+                .checked_sub(initial_indent_whitespace)
+                .unwrap_or(start_spaces)
         };
 
         line += &(0..spaces)
@@ -61,26 +68,37 @@ pub fn yaml(stream: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let yaml_spec = lines.join("\n");
 
+    // <DEBUG>
     if false {
         let name_lit = syn::LitStr::new(&yaml_spec, proc_macro2::Span::call_site());
         return (quote::quote! {
             const stuff: &'static str = #name_lit;
         }).into()
     }
+    // </DEBUG>
 
     let yaml_data = yaml_rust::YamlLoader::load_from_str(&yaml_spec)
         .expect("Invalid YAML");
 
-    
+    println!("{:#?}", yaml_data[0]);
+
     let api_version = yaml_data[0]["apiVersion"].as_str().expect("No API version specified");
-    let api_version_components: Vec<syn::Ident> = api_version.split("/")
+    let api_version_components: Vec<syn::Ident> = api_version.replace("-", "_").split("/")
         .map(|v| syn::Ident::new(v, proc_macro2::Span::call_site()))
         .collect();
 
     let kind = yaml_data[0]["kind"].as_str().expect("No kind found");
     let kind_ident = syn::Ident::new(kind, proc_macro2::Span::call_site());
 
-    (quote::quote! {
-        use k8s_openapi::api::#(#api_version_components)::*::#kind_ident;
-    }).into()
+    let yaml_lit = syn::LitStr::new(&yaml_spec, proc_macro2::Span::call_site());
+
+//        ::serde_yaml::from_str::<::k8s_openapi::api::#(#api_version_components)::*::#kind_ident>(#yaml_lit)
+    proc_macro::TokenStream::from(quote::quote! { 
+        {
+            #[derive(Default)]
+            struct H{};
+
+            H::default()
+        }
+    })
 }
