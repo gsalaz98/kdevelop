@@ -2,7 +2,6 @@ use proc_macro;
 use proc_macro2;
 use quote;
 use syn;
-use yaml_rust;
 
 #[proc_macro]
 pub fn yaml(stream: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -10,7 +9,9 @@ pub fn yaml(stream: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let tokens: Vec<proc_macro2::TokenTree> = stream.into_iter().collect();
 
     if tokens.is_empty() {
-        panic!("No YAML to parse");
+        return syn::Error::new(proc_macro2::Span::call_site(), "No YAML to parse")
+            .to_compile_error()
+            .into();
     }
 
     let mut lines = Vec::default();
@@ -67,38 +68,37 @@ pub fn yaml(stream: proc_macro::TokenStream) -> proc_macro::TokenStream {
     }
 
     let yaml_spec = lines.join("\n");
+    let yaml_data: serde_yaml::Value = match serde_yaml::from_str(&yaml_spec) {
+        Ok(parsed) => parsed,
+        Err(err) => return syn::Error::new(proc_macro2::Span::call_site(), format!("Invalid YAML: {:#?}", err))
+            .to_compile_error()
+            .into()
+    };
 
-    // <DEBUG>
-    if false {
-        let name_lit = syn::LitStr::new(&yaml_spec, proc_macro2::Span::call_site());
-        return (quote::quote! {
-            const stuff: &'static str = #name_lit;
-        }).into()
-    }
-    // </DEBUG>
+    let api_version = match yaml_data["apiVersion"].as_str() {
+        Some(resource_version) => resource_version,
+        None => return syn::Error::new(proc_macro2::Span::call_site(), "API version unable to be parsed as str")
+            .to_compile_error()
+            .into()
+    };
 
-    let yaml_data = yaml_rust::YamlLoader::load_from_str(&yaml_spec)
-        .expect("Invalid YAML");
-
-    println!("{:#?}", yaml_data[0]);
-
-    let api_version = yaml_data[0]["apiVersion"].as_str().expect("No API version specified");
-    let api_version_components: Vec<syn::Ident> = api_version.replace("-", "_").split("/")
-        .map(|v| syn::Ident::new(v, proc_macro2::Span::call_site()))
+    let api_version_components: Vec<syn::Ident> = api_version.replace("-", "_")
+        .split("/")
+        .map(|v| quote::format_ident!("{}", v))
         .collect();
 
-    let kind = yaml_data[0]["kind"].as_str().expect("No kind found");
-    let kind_ident = syn::Ident::new(kind, proc_macro2::Span::call_site());
+    let kind = match yaml_data["kind"].as_str() {
+        Some(decl_kind) => decl_kind,
+        None => return syn::Error::new(proc_macro2::Span::call_site(), "No kind found")
+            .to_compile_error()
+            .into()
+    };
 
+    let kind_ident = syn::Ident::new(kind, proc_macro2::Span::call_site());
     let yaml_lit = syn::LitStr::new(&yaml_spec, proc_macro2::Span::call_site());
 
-//        ::serde_yaml::from_str::<::k8s_openapi::api::#(#api_version_components)::*::#kind_ident>(#yaml_lit)
-    proc_macro::TokenStream::from(quote::quote! { 
-        {
-            #[derive(Default)]
-            struct H{};
-
-            H::default()
-        }
-    })
+    (quote::quote! {{
+        let return_type: ::k8s_openapi::api::#(#api_version_components)::*::#kind_ident = ::serde_yaml::from_str(#yaml_lit).expect("Failed to parse YAML properly");
+        return_type
+    }}).into()
 }

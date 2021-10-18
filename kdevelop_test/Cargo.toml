@@ -3,6 +3,9 @@ name = "kdevelop_testing"
 version = "0.1.0"
 edition = "2018"
 
+[features]
+procmacro2_semver_exempt = []
+
 [dependencies]
 k8s-openapi = { version = "0.13.1", features = ["v1_22"] }
 kdevelop = { path = "../macros" }

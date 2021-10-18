@@ -1,10 +1,6 @@
-#![feature(trace_macros)]
-trace_macros!(false);
-
-use kdevelop;
 
 fn main() {
-    let abcdef = kdevelop::yaml!(
+    let dep = kdevelop::yaml!(
         apiVersion: apps/v1
         kind: Deployment
         metadata:
@@ -28,9 +24,4 @@ fn main() {
                 ports:
                 - containerPort: 80
     );
-
-    //println!("{:#?}", abcdef);
-
-    //let ax = ::serde_yaml::from_str::<::k8s_openapi::api::apps::v1::Deployment>("")
-    //    .expect("Invalid YAML while deserializing");
 }
